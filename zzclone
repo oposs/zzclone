@@ -1,0 +1,335 @@
+#!/usr/bin/env perl
+use v5.22;
+use strict;
+use warnings;
+use Getopt::Long qw(:config no_ignore_case bundling);
+
+my $last_only = 0;
+my $sync = 0;
+my $rollback = 0;
+my $resume = 0;
+my $chain = 0;
+my $sudo = 0;
+my $local_sudo = 0;
+my $remote_sudo = 0;
+my $verbose = 0;
+my $help = 0;
+
+GetOptions(
+    'l|last-only'  => \$last_only,
+    's|sync'       => \$sync,
+    'R|rollback'   => \$rollback,
+    'r|resume'     => \$resume,
+    'c|chain'      => \$chain,
+    'S|sudo'       => \$sudo,
+    'local-sudo'   => \$local_sudo,
+    'remote-sudo'  => \$remote_sudo,
+    'v|verbose'    => \$verbose,
+    'h|help'       => \$help,
+) or exit 1;
+
+# "-v" passed through to every "zfs send" so the transfer reports progress.
+my $send_v = $verbose ? ' -v' : '';
+
+# "-s" passed through to every "zfs receive" so an interrupted transfer leaves a
+# resume token on the destination, allowing it to be picked up again later.
+my $recv_s = $resume ? ' -s' : '';
+
+# --sudo is a shorthand for "both the local and the remote side".
+$local_sudo = $remote_sudo = 1 if $sudo;
+
+# --rollback only makes sense in sync mode; imply it.
+$sync = 1 if $rollback;
+
+# --resume relies on sync mode to compute the catch-up incremental after an
+# interrupted stream has been finished; imply it. (Without sync a re-run after
+# the token is consumed would fall back to a full send that fails because the
+# destination already exists.)
+$sync = 1 if $resume;
+
+# In chain mode, all commands are collected and emitted at the end joined with
+# " && \\" so the whole sequence can be pasted into a shell as one chain that
+# aborts on the first failure. Comments are sent to STDERR so they stay visible
+# without polluting the pasteable output.
+my @commands;
+
+sub emit_cmd {
+    my $cmd = shift;
+    if ($chain) {
+        push @commands, $cmd;
+    } else {
+        print "$cmd\n";
+    }
+}
+
+sub emit_comment {
+    my $msg = shift;
+    if ($chain) {
+        print STDERR "$msg\n";
+    } else {
+        print "$msg\n";
+    }
+}
+
+sub shell_quote {
+    my $str = shift;
+    $str =~ s/'/'\\''/g;
+    return "'$str'";
+}
+
+sub parse_arg {
+    my $arg = shift;
+    my @parts = split /:/, $arg, 2;
+    if (@parts == 2 && $parts[0] !~ m{/}) {
+        return ($parts[0], $parts[1]);
+    }
+    return (undef, $arg);
+}
+
+my ($src_host, $src_root) = parse_arg(shift @ARGV // '');
+my ($dest_host, $dest_root) = parse_arg(shift @ARGV // '');
+
+if ($help or not $dest_root) {
+    print <<"USAGE";
+Usage: $0 [options] [src-host:]src-root [dest-host:]dest-root
+
+Generate the zfs send/receive commands needed to clone or update a ZFS
+dataset tree from a source to a destination. The commands are written to
+stdout only -- nothing is ever executed. Review the output, then pipe it
+to a shell or paste it yourself.
+
+Source and destination are given as a dataset name, optionally prefixed
+with a host for SSH access ("host:pool/path"). Either the source or the
+destination may be remote, but not both. The script recurses through all
+child datasets under src-root and maps each one onto dest-root.
+
+Options:
+  -l, --last-only  Only transfer the most recent snapshot of each dataset
+                   instead of the full snapshot history. Without --sync this
+                   means a single full send of the last snapshot; the initial
+                   full send + incremental to the last snapshot is skipped.
+
+  -s, --sync       Incremental update mode. For each dataset, look at the
+                   snapshots that already exist on the destination, find the
+                   most recent snapshot common to both sides, verify it by GUID
+                   (to make sure the datasets are actually related), and emit a
+                   single incremental "zfs send -I <common> <last>" to bring the
+                   destination up to date. Datasets that are already current are
+                   reported as up to date; datasets with no common snapshot fall
+                   back to a full send.
+
+  -R, --rollback   Before each incremental send, emit a
+                   "zfs rollback -r <dest>\@<common>" that rolls the destination
+                   back to the common snapshot. This discards local changes made
+                   to the destination filesystem since its last snapshot as well
+                   as any diverging snapshots that are newer on the destination,
+                   so the incremental receive applies cleanly. Implies --sync.
+
+  -r, --resume     Make transfers resumable. Every "zfs receive" is emitted with
+                   "-s", so if a transfer is interrupted the destination keeps a
+                   resume token. On the next run the script reads that token and
+                   emits "zfs send -t <token>" to finish the interrupted stream,
+                   before doing anything else for that dataset. Finishing the
+                   stream only brings the destination to the resumed snapshot, so
+                   run the command once more afterwards to send any newer
+                   snapshots. Implies --sync. When this mode is active the script
+                   also prints a short note explaining how to resume by hand.
+
+  -c, --chain      Collect all generated commands and print them as a single
+                   chain joined with " && \\" so the whole sequence can be
+                   pasted into a shell at once and aborts on the first failure.
+                   Informational comments are written to stderr instead of
+                   stdout so they do not end up in the pasteable output.
+
+  -S, --sudo       Prefix every "zfs" invocation with "sudo", on both the local
+                   and the remote side. Shorthand for --local-sudo --remote-sudo.
+
+      --local-sudo   Use "sudo zfs" only on the local side (the side without a
+                   host prefix).
+
+      --remote-sudo  Use "sudo zfs" only on the remote (SSH) side, i.e. emit
+                   "ssh <host> sudo zfs ...". This requires passwordless sudo
+                   (or a tty) on that host.
+
+                   Sudo applies both to the commands written to stdout and to
+                   the inspection commands the script runs itself to query
+                   snapshots and GUIDs. Since at most one of source/destination
+                   may be remote, --local-sudo and --remote-sudo address the two
+                   sides independently.
+
+  -v, --verbose    Add "-v" to every "zfs send" so the transfer reports its
+                   estimated size and progress on stderr while it runs.
+
+  -h, --help       Show this help message and exit.
+
+Examples:
+  # Show what a first-time clone of a tree would run
+  $0 tank/data backup/data
+
+  # Incrementally update an existing backup, rolling back local changes first
+  $0 -s -R tank/data backup/data
+
+  # Update a remote destination over SSH, as one pasteable command chain
+  $0 -s -R -c tank/data backup-host:tank/data
+
+  # Resumable transfer: re-run the same command to continue after an interruption
+  $0 -r tank/data backup-host:tank/data
+USAGE
+    exit($help ? 0 : 1);
+}
+
+if ($src_host && $dest_host) {
+    print STDERR "Error: Both source and destination cannot be remote.\n";
+    exit 1;
+}
+
+my $src_remote = $src_host ? "ssh $src_host " : "";
+my $dest_remote = $dest_host ? "ssh $dest_host " : "";
+
+# Sudo-aware "zfs" prefix for each side. A side gets "sudo" when it is the
+# remote (SSH) side and --remote-sudo is set, or the local side and
+# --local-sudo is set. --sudo turns on both. So a remote side becomes
+# "ssh <host> sudo zfs ..." and a local side becomes "sudo zfs ...".
+my $src_sudo = ($src_host ? $remote_sudo : $local_sudo) ? "sudo " : "";
+my $dest_sudo = ($dest_host ? $remote_sudo : $local_sudo) ? "sudo " : "";
+my $src_zfs = "${src_remote}${src_sudo}zfs";
+my $dest_zfs = "${dest_remote}${dest_sudo}zfs";
+
+# In resume mode, fetch every resume token under the destination root in a
+# single recursive call rather than one round-trip per dataset (almost none
+# hold a token). Datasets that do not exist yet simply have no entry.
+my %resume_tokens;
+if ($resume) {
+    open my $tok, '-|', "${dest_zfs} get -rH -t filesystem,volume -o name,value receive_resume_token ".shell_quote($dest_root)." 2>/dev/null";
+    while (<$tok>) {
+        chomp;
+        my ($name, $value) = split /\t/, $_, 2;
+        $resume_tokens{$name} = $value if defined $value && $value ne '' && $value ne '-';
+    }
+}
+
+# Explain how resuming works whenever resume mode is on, so an interrupted run
+# can be continued without having to remember the mechanics.
+if ($resume) {
+    emit_comment("# Resume mode (implies --sync): every 'zfs receive' runs with -s, so an");
+    emit_comment("# interrupted transfer leaves a resume token on the destination dataset.");
+    emit_comment("# To continue, just run this same command again -- it detects the token");
+    emit_comment("# and emits 'zfs send -t <token>' to finish the interrupted stream.");
+    emit_comment("# A resumed run only finishes that stream; run the command once more");
+    emit_comment("# afterwards to send any snapshots created since (sync incremental).");
+    emit_comment("# To resume a single dataset by hand, read the token and feed it back:");
+    emit_comment("#   ${dest_zfs} get -H -o value receive_resume_token <dest-dataset>");
+    emit_comment("#   ${src_zfs} send -t <token> | mbuffer -m 1G | ${dest_zfs} receive -s -u <dest-dataset>");
+    emit_comment("# To discard a stale token instead: ${dest_zfs} receive -A <dest-dataset>");
+}
+
+open my $all, '-|', "${src_zfs} list -s name -o name -H -r ".shell_quote($src_root);
+while (<$all>){
+    chomp;
+    my $fileset = $_;
+    open my $one, '-|', "${src_zfs} list -o name -s creation -H -d1 -t snapshot ".shell_quote($fileset);
+    my @src_snaps;
+    while (<$one>){
+        chomp;
+        push @src_snaps, $_;
+    }
+    if (not @src_snaps){
+        emit_comment("# skipping $fileset - no snapshots");
+        next;
+    }
+    my $first = $src_snaps[0];
+    my $last = $src_snaps[-1];
+
+    my $dest_fileset = $fileset;
+    $dest_fileset =~ s{^\Q$src_root\E}{$dest_root};
+
+    # If a previous transfer to this destination was interrupted while running
+    # with "zfs receive -s", the destination holds a resume token. Pick it up
+    # and continue exactly where it left off ("zfs send -t <token>") before
+    # doing anything else for this dataset. Finishing the interrupted stream
+    # only brings the destination to the resumed snapshot; the sync incremental
+    # to the newest snapshot follows on the next run, once the token is gone.
+    if (my $token = $resume_tokens{$dest_fileset}) {
+        emit_comment("# $fileset - resuming interrupted transfer from saved token");
+        emit_cmd("${src_zfs} send${send_v} -t ".shell_quote($token)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_fileset));
+        next;
+    }
+
+    if ($sync) {
+        # find destination snapshots
+        my %dest_snaps;
+        open my $dst, '-|', "${dest_zfs} list -o name -s creation -H -d1 -t snapshot ".shell_quote($dest_fileset)." 2>/dev/null";
+        while (<$dst>){
+            chomp;
+            my $snap_name = $_;
+            $snap_name =~ s/.*\@/\@/;
+            $dest_snaps{$snap_name} = 1;
+        }
+
+        # find last common snapshot
+        my $common;
+        for my $snap (reverse @src_snaps) {
+            my $snap_name = $snap;
+            $snap_name =~ s/.*\@/\@/;
+            if ($dest_snaps{$snap_name}) {
+                $common = $snap;
+                last;
+            }
+        }
+
+        if ($common) {
+            # verify guid to ensure snapshots are actually related
+            my $common_snap_name = $common;
+            $common_snap_name =~ s/.*\@/\@/;
+            my $src_guid_arg = shell_quote($common);
+            my $src_guid = `${src_zfs} get -H -o value guid $src_guid_arg`;
+            chomp $src_guid;
+            my $dest_guid_arg = shell_quote("$dest_fileset$common_snap_name");
+            my $dest_guid = `${dest_zfs} get -H -o value guid $dest_guid_arg`;
+            chomp $dest_guid;
+            if ($src_guid ne $dest_guid) {
+                print STDERR "Error: $fileset$common_snap_name - same name but different guid ($src_guid vs $dest_guid). Datasets are not related.\n";
+                next;
+            }
+
+            if ($common eq $last) {
+                emit_comment("# $fileset - up to date");
+                next;
+            }
+
+            # roll the destination back to the common snapshot, discarding any
+            # diverging snapshots that are newer on the destination
+            if ($rollback) {
+                emit_cmd("${dest_zfs} rollback -r ".shell_quote("$dest_fileset$common_snap_name"));
+            }
+
+            # incremental send from common to last
+            my $snap_name = $common;
+            $snap_name =~ s/.+\@//;
+            emit_cmd("${src_zfs} send${send_v} -I ".shell_quote($snap_name)." ".shell_quote($last)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_fileset));
+            next;
+        }
+
+        # no common snapshot - full send
+        emit_comment("# $fileset - no common snapshot, full send");
+    }
+
+    # full send (default behavior or sync fallback)
+    my $send_snap = $last_only ? $last : $first;
+    my $dest_path = $send_snap;
+    $dest_path =~ s{\Q$src_root\E}{};
+    my $dest_full = "$dest_root$dest_path";
+    emit_cmd("${src_zfs} send${send_v} ".shell_quote($send_snap)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_full));
+    if (!$last_only && $first ne $last){
+       my $snap_name = $first;
+       $snap_name =~ s/.+\@//;
+       $dest_full =~ s/\@.+//;
+       emit_cmd("${src_zfs} send${send_v} -I ".shell_quote($snap_name)." ".shell_quote($last)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_full));
+    }
+}
+
+# In chain mode, emit everything as one pasteable command chain.
+if ($chain && @commands) {
+    print join(" && \\\n", @commands)."\n";
+}
+
