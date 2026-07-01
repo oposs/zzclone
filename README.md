@@ -95,6 +95,10 @@ Makes large transfers restartable after an interruption (dropped SSH connection,
 - **Output only**: The tool prints commands but does not execute them, allowing review before running
 - **GUID verification** (sync mode): Ensures source and destination snapshots are actually related before generating incremental commands
 
+## Credits
+
+The script was originally written by [Tobias Oetiker](https://github.com/oetiker) (tobi@oetiker.ch).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
