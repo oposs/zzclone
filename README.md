@@ -8,7 +8,7 @@ The tool outputs shell commands to stdout — it does not execute them directly.
 
 ## Prerequisites
 
-- **Perl** v5.22+
+- **Perl** 5 (any modern version)
 - **ZFS** (`zfs` command available)
 - **mbuffer** for buffered transfers
 - **SSH** for remote transfers (key-based auth recommended)
