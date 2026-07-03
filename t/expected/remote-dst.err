@@ -1,0 +1,16 @@
+# Resume mode (implies --sync): every 'zfs receive' runs with -s, so an
+# interrupted transfer leaves a resume token on the destination dataset.
+# To continue, just run this same command again -- it detects the token
+# and emits 'zfs send -t <token>' to finish the interrupted stream.
+# A resumed run only finishes that stream; run the command once more
+# afterwards to send any snapshots created since (sync incremental).
+# To resume a single dataset by hand, read the token and feed it back:
+#   ssh fake sudo zfs get -H -o value receive_resume_token <dest-dataset>
+#   zfs send -t <token> | mbuffer -m 1G | ssh fake sudo zfs receive -s -u <dest-dataset>
+# To discard a stale token instead: ssh fake sudo zfs receive -A <dest-dataset>
+# tank/data - up to date
+# skipping tank/data/b - no snapshots
+# tank/data/c - no common snapshot, full send
+# tank/data/d - resuming interrupted transfer from saved token
+# tank/data/e - up to date
+Error: tank/data/f@s1 - same name but different guid (guid/f@s1 vs guid-DIVERGED). Datasets are not related.

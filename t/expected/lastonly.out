@@ -1,0 +1,8 @@
+zfs send 'tank/data@s1' | mbuffer -m 1G | zfs receive -u 'back/data@s1'
+zfs send 'tank/data/a@s3' | mbuffer -m 1G | zfs receive -u 'back/data/a@s3'
+# skipping tank/data/b - no snapshots
+zfs send 'tank/data/c@s2' | mbuffer -m 1G | zfs receive -u 'back/data/c@s2'
+zfs send 'tank/data/d@s2' | mbuffer -m 1G | zfs receive -u 'back/data/d@s2'
+zfs send 'tank/data/e@s2' | mbuffer -m 1G | zfs receive -u 'back/data/e@s2'
+zfs send 'tank/data/f@s2' | mbuffer -m 1G | zfs receive -u 'back/data/f@s2'
+exit=0

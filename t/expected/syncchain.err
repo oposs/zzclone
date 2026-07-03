@@ -1,0 +1,5 @@
+# tank/data - up to date
+# skipping tank/data/b - no snapshots
+# tank/data/c - no common snapshot, full send
+# tank/data/e - up to date
+Error: tank/data/f@s1 - same name but different guid (guid/f@s1 vs guid-DIVERGED). Datasets are not related.

@@ -1,0 +1,5 @@
+#!/bin/sh
+# fake ssh for the regression test: drop the hostname, run the rest
+# locally so it hits the zfs/sudo shims next to this script
+shift
+exec "$@"

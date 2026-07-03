@@ -1,0 +1,3 @@
+#!/bin/sh
+# fake sudo for the regression test: just run the command
+exec "$@"

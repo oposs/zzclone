@@ -1,0 +1,84 @@
+Usage: ZZCLONE [options] [src-host:]src-root [dest-host:]dest-root
+
+Generate the zfs send/receive commands needed to clone or update a ZFS
+dataset tree from a source to a destination. The commands are written to
+stdout only -- nothing is ever executed. Review the output, then pipe it
+to a shell or paste it yourself.
+
+Source and destination are given as a dataset name, optionally prefixed
+with a host for SSH access ("host:pool/path"). Either the source or the
+destination may be remote, but not both. The script recurses through all
+child datasets under src-root and maps each one onto dest-root.
+
+Options:
+  -l, --last-only  Only transfer the most recent snapshot of each dataset
+                   instead of the full snapshot history. Without --sync this
+                   means a single full send of the last snapshot; the initial
+                   full send + incremental to the last snapshot is skipped.
+
+  -s, --sync       Incremental update mode. For each dataset, look at the
+                   snapshots that already exist on the destination, find the
+                   most recent snapshot common to both sides, verify it by GUID
+                   (to make sure the datasets are actually related), and emit a
+                   single incremental "zfs send -I <common> <last>" to bring the
+                   destination up to date. Datasets that are already current are
+                   reported as up to date; datasets with no common snapshot fall
+                   back to a full send.
+
+  -R, --rollback   Before each incremental send, emit a
+                   "zfs rollback -r <dest>@<common>" that rolls the destination
+                   back to the common snapshot. This discards local changes made
+                   to the destination filesystem since its last snapshot as well
+                   as any diverging snapshots that are newer on the destination,
+                   so the incremental receive applies cleanly. Implies --sync.
+
+  -r, --resume     Make transfers resumable. Every "zfs receive" is emitted with
+                   "-s", so if a transfer is interrupted the destination keeps a
+                   resume token. On the next run the script reads that token and
+                   emits "zfs send -t <token>" to finish the interrupted stream,
+                   before doing anything else for that dataset. Finishing the
+                   stream only brings the destination to the resumed snapshot, so
+                   run the command once more afterwards to send any newer
+                   snapshots. Implies --sync. When this mode is active the script
+                   also prints a short note explaining how to resume by hand.
+
+  -c, --chain      Collect all generated commands and print them as a single
+                   chain joined with " && \" so the whole sequence can be
+                   pasted into a shell at once and aborts on the first failure.
+                   Informational comments are written to stderr instead of
+                   stdout so they do not end up in the pasteable output.
+
+  -S, --sudo       Prefix every "zfs" invocation with "sudo", on both the local
+                   and the remote side. Shorthand for --local-sudo --remote-sudo.
+
+      --local-sudo   Use "sudo zfs" only on the local side (the side without a
+                   host prefix).
+
+      --remote-sudo  Use "sudo zfs" only on the remote (SSH) side, i.e. emit
+                   "ssh <host> sudo zfs ...". This requires passwordless sudo
+                   (or a tty) on that host.
+
+                   Sudo applies both to the commands written to stdout and to
+                   the inspection commands the script runs itself to query
+                   snapshots and GUIDs. Since at most one of source/destination
+                   may be remote, --local-sudo and --remote-sudo address the two
+                   sides independently.
+
+  -v, --verbose    Add "-v" to every "zfs send" so the transfer reports its
+                   estimated size and progress on stderr while it runs.
+
+  -h, --help       Show this help message and exit.
+
+Examples:
+  # Show what a first-time clone of a tree would run
+  ZZCLONE tank/data backup/data
+
+  # Incrementally update an existing backup, rolling back local changes first
+  ZZCLONE -s -R tank/data backup/data
+
+  # Update a remote destination over SSH, as one pasteable command chain
+  ZZCLONE -s -R -c tank/data backup-host:tank/data
+
+  # Resumable transfer: re-run the same command to continue after an interruption
+  ZZCLONE -r tank/data backup-host:tank/data
+exit=1

@@ -1,0 +1,71 @@
+#!/usr/bin/env perl
+# Fake zfs for the regression test. Answers the query shapes zzclone
+# issues (dataset list, snapshot list, guid, resume tokens) from a canned
+# dataset table chosen so that every code path is exercised:
+#
+#   tank/data     root dataset, destination up to date
+#   tank/data/a   destination one snapshot behind -> incremental send
+#   tank/data/b   no snapshots -> skipped
+#   tank/data/c   destination missing -> full send + history incremental
+#   tank/data/d   destination holds a resume token -> zfs send -t
+#   tank/data/e   destination current -> up to date
+#   tank/data/f   same snapshot name, different guid -> unrelated, error
+use strict;
+use warnings;
+
+my %snaps = (
+    'tank/data'   => [qw(s1)],
+    'tank/data/a' => [qw(s1 s2 s3)],
+    'tank/data/b' => [],
+    'tank/data/c' => [qw(s1 s2)],
+    'tank/data/d' => [qw(s1 s2)],
+    'tank/data/e' => [qw(s1 s2)],
+    'tank/data/f' => [qw(s1 s2)],
+    'back/data'   => [qw(s1)],
+    'back/data/a' => [qw(s1)],
+    'back/data/d' => [qw(s1)],
+    'back/data/e' => [qw(s1 s2)],
+    'back/data/f' => [qw(s1)],
+);
+my %token = ('back/data/d' => 'TOKEN123');
+
+# guid: identical for related src/dest snapshots (keyed on the path below
+# the root), except back/data/f@s1 which diverges deliberately.
+sub guid {
+    my $snap = shift;
+    return 'guid-DIVERGED' if $snap eq 'back/data/f@s1';
+    (my $rel = $snap) =~ s{^(tank|back)/data}{};
+    return "guid$rel";
+}
+
+sub subtree {
+    my $root = shift;
+    return sort grep { $_ eq $root || m{^\Q$root\E/} } keys %snaps;
+}
+
+my @argv = @ARGV;
+my $cmd = shift @argv;
+
+if ($cmd eq 'list') {
+    my $target = $argv[-1];
+    if (grep { $_ eq '-t' } @argv) {
+        exists $snaps{$target} or die "cannot open '$target': dataset does not exist\n";
+        print "$target\@$_\n" for @{$snaps{$target}};
+    } else {
+        my @sets = subtree($target) or die "cannot open '$target': dataset does not exist\n";
+        print "$_\n" for @sets;
+    }
+    exit 0;
+}
+
+if ($cmd eq 'get') {
+    my ($prop, $target) = @argv[-2, -1];
+    if ($prop eq 'guid') {
+        print guid($target), "\n";
+    } elsif ($prop eq 'receive_resume_token') {
+        printf "%s\t%s\n", $_, $token{$_} // '-' for subtree($target);
+    }
+    exit 0;
+}
+
+die "fake zfs: unhandled command: @ARGV\n";

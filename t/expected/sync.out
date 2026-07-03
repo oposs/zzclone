@@ -1,0 +1,9 @@
+# tank/data - up to date
+zfs send -I 's1' 'tank/data/a@s3' | mbuffer -m 1G | zfs receive -u 'back/data/a'
+# skipping tank/data/b - no snapshots
+# tank/data/c - no common snapshot, full send
+zfs send 'tank/data/c@s1' | mbuffer -m 1G | zfs receive -u 'back/data/c@s1'
+zfs send -I 's1' 'tank/data/c@s2' | mbuffer -m 1G | zfs receive -u 'back/data/c'
+zfs send -I 's1' 'tank/data/d@s2' | mbuffer -m 1G | zfs receive -u 'back/data/d'
+# tank/data/e - up to date
+exit=0
