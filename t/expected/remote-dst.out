@@ -2,5 +2,7 @@ ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sud
 zfs send -I 's1' 'tank/data/a@s3' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u 'back/data/a' && \
 zfs send 'tank/data/c@s1' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -F -u 'back/data/c@s1' && \
 zfs send -I 's1' 'tank/data/c@s2' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u 'back/data/c' && \
-zfs send -t 'TOKEN123' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u 'back/data/d'
+zfs send -t 'TOKEN123' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u 'back/data/d' && \
+zfs send 'tank/data/g@s2' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -F -u 'back/data/g@s2' && \
+zfs send -I 's2' 'tank/data/g@s3' | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u 'back/data/g'
 exit=0

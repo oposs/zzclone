@@ -10,6 +10,8 @@
 #   tank/data/d   destination holds a resume token -> zfs send -t
 #   tank/data/e   destination current -> up to date
 #   tank/data/f   same snapshot name, different guid -> unrelated, error
+#   tank/data/g   destination exists but shares no snapshot name (its base
+#                 was rotated away) -> full send blocked unless --overwrite
 use strict;
 use warnings;
 
@@ -21,11 +23,13 @@ my %snaps = (
     'tank/data/d' => [qw(s1 s2)],
     'tank/data/e' => [qw(s1 s2)],
     'tank/data/f' => [qw(s1 s2)],
+    'tank/data/g' => [qw(s2 s3)],
     'back/data'   => [qw(s1)],
     'back/data/a' => [qw(s1)],
     'back/data/d' => [qw(s1)],
     'back/data/e' => [qw(s1 s2)],
     'back/data/f' => [qw(s1)],
+    'back/data/g' => [qw(s1)],
 );
 my %token = ('back/data/d' => 'TOKEN123');
 

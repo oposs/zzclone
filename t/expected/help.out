@@ -77,6 +77,15 @@ Options:
                    Combined with --resume, a wedged transfer then fails fast,
                    leaves a resume token, and is picked up by the next run.
 
+  -F, --overwrite  When a destination dataset exists but shares no snapshot
+                   with the source (e.g. its base snapshot was rotated away on
+                   the source before a sync could run), emit a
+                   "zfs destroy -r <dest>" before the fallback full send so the
+                   destination is recreated from scratch. WARNING: this
+                   destroys the destination dataset tree including all its
+                   snapshots. Without this option such datasets produce a
+                   warning and a full send that will fail. Implies --sync.
+
   -h, --help       Show this help message and exit.
 
 Examples:

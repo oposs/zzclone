@@ -28,6 +28,7 @@ The tool outputs shell commands to stdout — it does not execute them directly.
 - `-c, --chain` — Emit all commands as a single `&&`-joined chain (comments go to stderr), ready to pipe into a shell
 - `-v, --verbose` — Add `-v` to every `zfs send` for size estimate and progress
 - `-W, --watchdog <sec>` — Add `-W <sec>` to every mbuffer: a transfer that moves no data for that long aborts (and leaves a resume token with `--resume`) instead of hanging forever
+- `-F, --overwrite` — When a destination exists but shares no snapshot with the source (e.g. its base snapshot was rotated away on the source), emit `zfs destroy -r` before the fallback full send. **Destroys the destination dataset tree**; without it such datasets get a warning and a full send that will fail (implies `--sync`)
 
 All emitted `ssh` commands use `BatchMode` and keepalives (`ServerAliveInterval 15`, `ServerAliveCountMax 4`), so a silently dead connection fails within about a minute rather than blocking the pipeline indefinitely.
 - `-S, --sudo` — Prefix every `zfs` invocation with `sudo` (shorthand for `--local-sudo --remote-sudo`)

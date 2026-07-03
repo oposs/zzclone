@@ -13,6 +13,7 @@ my $local_sudo = 0;
 my $remote_sudo = 0;
 my $verbose = 0;
 my $watchdog = 0;
+my $overwrite = 0;
 my $help = 0;
 
 GetOptions(
@@ -26,6 +27,7 @@ GetOptions(
     'remote-sudo'  => \$remote_sudo,
     'v|verbose'    => \$verbose,
     'W|watchdog=i' => \$watchdog,
+    'F|overwrite'  => \$overwrite,
     'h|help'       => \$help,
 ) or exit 1;
 
@@ -47,6 +49,9 @@ $local_sudo = $remote_sudo = 1 if $sudo;
 
 # --rollback only makes sense in sync mode; imply it.
 $sync = 1 if $rollback;
+
+# --overwrite reacts to what is found on the destination; imply sync mode.
+$sync = 1 if $overwrite;
 
 # --resume relies on sync mode to compute the catch-up incremental after an
 # interrupted stream has been finished; imply it. (Without sync a re-run after
@@ -210,6 +215,15 @@ Options:
                    Combined with --resume, a wedged transfer then fails fast,
                    leaves a resume token, and is picked up by the next run.
 
+  -F, --overwrite  When a destination dataset exists but shares no snapshot
+                   with the source (e.g. its base snapshot was rotated away on
+                   the source before a sync could run), emit a
+                   "zfs destroy -r <dest>" before the fallback full send so the
+                   destination is recreated from scratch. WARNING: this
+                   destroys the destination dataset tree including all its
+                   snapshots. Without this option such datasets produce a
+                   warning and a full send that will fail. Implies --sync.
+
   -h, --help       Show this help message and exit.
 
 Examples:
@@ -341,8 +355,22 @@ for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote
             next;
         }
 
-        # no common snapshot - full send
-        emit_comment("# $fileset - no common snapshot, full send");
+        # No common snapshot - fall back to a full send. A destination that
+        # already exists cannot receive a full stream (zfs refuses even with
+        # -F once it carries snapshots, e.g. an orphaned base whose source
+        # copy was rotated away). --overwrite clears it first; otherwise warn,
+        # since the emitted receive is going to fail.
+        my ($dest_exists) = read_lines("${dest_zfs} list -o name -H ".shell_quote($dest_fileset)." 2>/dev/null");
+        if ($dest_exists && $overwrite) {
+            emit_comment("# $fileset - no common snapshot, destroying destination, full send");
+            emit_cmd("${dest_zfs} destroy -r ".shell_quote($dest_fileset));
+        } elsif ($dest_exists) {
+            emit_comment("# $fileset - WARNING: destination exists but shares no snapshot with the source;");
+            emit_comment("# the full send below will fail -- use --overwrite (-F) to destroy and recreate it");
+            emit_comment("# $fileset - no common snapshot, full send");
+        } else {
+            emit_comment("# $fileset - no common snapshot, full send");
+        }
     }
 
     # full send (default behavior or sync fallback), then unless --last-only

@@ -5,4 +5,5 @@ zfs send 'tank/data/c@s2' | mbuffer -m 1G | zfs receive -u 'back/data/c@s2'
 zfs send 'tank/data/d@s2' | mbuffer -m 1G | zfs receive -u 'back/data/d@s2'
 zfs send 'tank/data/e@s2' | mbuffer -m 1G | zfs receive -u 'back/data/e@s2'
 zfs send 'tank/data/f@s2' | mbuffer -m 1G | zfs receive -u 'back/data/f@s2'
+zfs send 'tank/data/g@s3' | mbuffer -m 1G | zfs receive -u 'back/data/g@s3'
 exit=0

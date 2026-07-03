@@ -17,4 +17,9 @@ zfs send -I 's1' 'tank/data/c@s2' | mbuffer -m 1G -W 300 | zfs receive -s -u 'ba
 # tank/data/d - resuming interrupted transfer from saved token
 zfs send -t 'TOKEN123' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/d'
 # tank/data/e - up to date
+# tank/data/g - WARNING: destination exists but shares no snapshot with the source;
+# the full send below will fail -- use --overwrite (-F) to destroy and recreate it
+# tank/data/g - no common snapshot, full send
+zfs send 'tank/data/g@s2' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/g@s2'
+zfs send -I 's2' 'tank/data/g@s3' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/g'
 exit=0

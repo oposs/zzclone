@@ -14,3 +14,6 @@
 # tank/data/d - resuming interrupted transfer from saved token
 # tank/data/e - up to date
 Error: tank/data/f@s1 - same name but different guid (guid/f@s1 vs guid-DIVERGED). Datasets are not related.
+# tank/data/g - WARNING: destination exists but shares no snapshot with the source;
+# the full send below will fail -- use --overwrite (-F) to destroy and recreate it
+# tank/data/g - no common snapshot, full send

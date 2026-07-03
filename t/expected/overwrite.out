@@ -1,14 +1,15 @@
 # tank/data - up to date
+zfs rollback -r 'back/data/a@s1'
 zfs send -I 's1' 'tank/data/a@s3' | mbuffer -m 1G | zfs receive -u 'back/data/a'
 # skipping tank/data/b - no snapshots
 # tank/data/c - no common snapshot, full send
-zfs send 'tank/data/c@s1' | mbuffer -m 1G | zfs receive -u 'back/data/c@s1'
+zfs send 'tank/data/c@s1' | mbuffer -m 1G | zfs receive -F -u 'back/data/c@s1'
 zfs send -I 's1' 'tank/data/c@s2' | mbuffer -m 1G | zfs receive -u 'back/data/c'
+zfs rollback -r 'back/data/d@s1'
 zfs send -I 's1' 'tank/data/d@s2' | mbuffer -m 1G | zfs receive -u 'back/data/d'
 # tank/data/e - up to date
-# tank/data/g - WARNING: destination exists but shares no snapshot with the source;
-# the full send below will fail -- use --overwrite (-F) to destroy and recreate it
-# tank/data/g - no common snapshot, full send
-zfs send 'tank/data/g@s2' | mbuffer -m 1G | zfs receive -u 'back/data/g@s2'
+# tank/data/g - no common snapshot, destroying destination, full send
+zfs destroy -r 'back/data/g'
+zfs send 'tank/data/g@s2' | mbuffer -m 1G | zfs receive -F -u 'back/data/g@s2'
 zfs send -I 's2' 'tank/data/g@s3' | mbuffer -m 1G | zfs receive -u 'back/data/g'
 exit=0
