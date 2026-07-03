@@ -37,6 +37,8 @@ my @cases = (
     [ 'remote-dst',  qw(-s -R -c -r --remote-sudo tank/data fake:back/data) ],
     [ 'local-sudo',  qw(-s --local-sudo tank/data back/data) ],
     [ 'both-remote', qw(fake:tank/data fake:back/data) ],
+    [ 'watchdog',    qw(-r -W 300 tank/data back/data) ],
+    [ 'rollback-F',  qw(-R tank/data back/data) ],
 );
 
 sub slurp {

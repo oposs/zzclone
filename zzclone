@@ -12,6 +12,7 @@ my $sudo = 0;
 my $local_sudo = 0;
 my $remote_sudo = 0;
 my $verbose = 0;
+my $watchdog = 0;
 my $help = 0;
 
 GetOptions(
@@ -24,6 +25,7 @@ GetOptions(
     'local-sudo'   => \$local_sudo,
     'remote-sudo'  => \$remote_sudo,
     'v|verbose'    => \$verbose,
+    'W|watchdog=i' => \$watchdog,
     'h|help'       => \$help,
 ) or exit 1;
 
@@ -33,6 +35,12 @@ my $send_v = $verbose ? ' -v' : '';
 # "-s" passed through to every "zfs receive" so an interrupted transfer leaves a
 # resume token on the destination, allowing it to be picked up again later.
 my $recv_s = $resume ? ' -s' : '';
+
+# The mbuffer stage decoupling send from receive. With --watchdog, mbuffer
+# aborts the pipeline when no data moves for the given time, so a silently
+# wedged transport becomes a clean failure (resumable with --resume) instead
+# of hanging forever.
+my $mbuffer = 'mbuffer -m 1G' . ($watchdog ? " -W $watchdog" : '');
 
 # --sudo is a shorthand for "both the local and the remote side".
 $local_sudo = $remote_sudo = 1 if $sudo;
@@ -155,7 +163,11 @@ Options:
                    back to the common snapshot. This discards local changes made
                    to the destination filesystem since its last snapshot as well
                    as any diverging snapshots that are newer on the destination,
-                   so the incremental receive applies cleanly. Implies --sync.
+                   so the incremental receive applies cleanly. The fallback full
+                   send likewise receives with -F, overwriting a destination
+                   that exists but shares no snapshot with the source (e.g. its
+                   base snapshot was rotated away after an interrupted first
+                   run). Implies --sync.
 
   -r, --resume     Make transfers resumable. Every "zfs receive" is emitted with
                    "-s", so if a transfer is interrupted the destination keeps a
@@ -192,6 +204,12 @@ Options:
   -v, --verbose    Add "-v" to every "zfs send" so the transfer reports its
                    estimated size and progress on stderr while it runs.
 
+  -W, --watchdog <sec>
+                   Add "-W <sec>" to every mbuffer so a transfer that moves no
+                   data for that long is aborted instead of hanging forever.
+                   Combined with --resume, a wedged transfer then fails fast,
+                   leaves a resume token, and is picked up by the next run.
+
   -h, --help       Show this help message and exit.
 
 Examples:
@@ -215,8 +233,13 @@ if ($src_host && $dest_host) {
     exit 1;
 }
 
-my $src_remote = $src_host ? "ssh $src_host " : "";
-my $dest_remote = $dest_host ? "ssh $dest_host " : "";
+# Keepalives make a silently dead connection fail within ~1 minute instead of
+# blocking the pipeline forever; BatchMode keeps ssh from ever stopping to
+# prompt. Failing fast matters: with --resume an aborted transfer is picked up
+# on the next run, a hung one needs a human.
+my $ssh = "ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4";
+my $src_remote = $src_host ? "$ssh $src_host " : "";
+my $dest_remote = $dest_host ? "$ssh $dest_host " : "";
 
 # Sudo-aware "zfs" prefix for each side. A side gets "sudo" when it is the
 # remote (SSH) side and --remote-sudo is set, or the local side and
@@ -231,8 +254,9 @@ my $dest_zfs = "${dest_remote}${dest_sudo}zfs";
 # the two ends, destination-side receive (unmounted). Only the send arguments
 # and the destination differ.
 sub transfer_cmd {
-    my ($send_args, $dest) = @_;
-    return "${src_zfs} send${send_v} $send_args | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest);
+    my ($send_args, $dest, $recv_extra) = @_;
+    $recv_extra //= '';
+    return "${src_zfs} send${send_v} $send_args | $mbuffer | ${dest_zfs} receive${recv_s}${recv_extra} -u ".shell_quote($dest);
 }
 
 # In resume mode, fetch every resume token under the destination root in a
@@ -257,7 +281,7 @@ if ($resume) {
     emit_comment("# afterwards to send any snapshots created since (sync incremental).");
     emit_comment("# To resume a single dataset by hand, read the token and feed it back:");
     emit_comment("#   ${dest_zfs} get -H -o value receive_resume_token <dest-dataset>");
-    emit_comment("#   ${src_zfs} send -t <token> | mbuffer -m 1G | ${dest_zfs} receive -s -u <dest-dataset>");
+    emit_comment("#   ${src_zfs} send -t <token> | $mbuffer | ${dest_zfs} receive -s -u <dest-dataset>");
     emit_comment("# To discard a stale token instead: ${dest_zfs} receive -A <dest-dataset>");
 }
 
@@ -322,9 +346,14 @@ for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote
     }
 
     # full send (default behavior or sync fallback), then unless --last-only
-    # an incremental bringing along the rest of the snapshot history
+    # an incremental bringing along the rest of the snapshot history. Under
+    # --rollback, receive -F overwrites a destination that exists without a
+    # usable common snapshot (e.g. its base snapshot was rotated away on the
+    # source after an interrupted first run) -- same contract as the rollback
+    # before an incremental: discard destination state so the receive applies.
     my $send_snap = $last_only ? $last : $first;
-    emit_cmd(transfer_cmd(shell_quote($send_snap), "$dest_fileset\@".snap_name($send_snap)));
+    my $recv_f = $rollback ? ' -F' : '';
+    emit_cmd(transfer_cmd(shell_quote($send_snap), "$dest_fileset\@".snap_name($send_snap), $recv_f));
     if (!$last_only && $first ne $last){
         emit_cmd(transfer_cmd("-I ".shell_quote(snap_name($first))." ".shell_quote($last), $dest_fileset));
     }

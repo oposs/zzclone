@@ -5,12 +5,16 @@
 # A resumed run only finishes that stream; run the command once more
 # afterwards to send any snapshots created since (sync incremental).
 # To resume a single dataset by hand, read the token and feed it back:
-#   sudo zfs get -H -o value receive_resume_token <dest-dataset>
-#   ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs send -t <token> | mbuffer -m 1G | sudo zfs receive -s -u <dest-dataset>
-# To discard a stale token instead: sudo zfs receive -A <dest-dataset>
+#   zfs get -H -o value receive_resume_token <dest-dataset>
+#   zfs send -t <token> | mbuffer -m 1G -W 300 | zfs receive -s -u <dest-dataset>
+# To discard a stale token instead: zfs receive -A <dest-dataset>
 # tank/data - up to date
+zfs send -I 's1' 'tank/data/a@s3' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/a'
 # skipping tank/data/b - no snapshots
 # tank/data/c - no common snapshot, full send
+zfs send 'tank/data/c@s1' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/c@s1'
+zfs send -I 's1' 'tank/data/c@s2' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/c'
 # tank/data/d - resuming interrupted transfer from saved token
+zfs send -t 'TOKEN123' | mbuffer -m 1G -W 300 | zfs receive -s -u 'back/data/d'
 # tank/data/e - up to date
-Error: tank/data/f@s1 - same name but different guid (guid/f@s1 vs guid-DIVERGED). Datasets are not related.
+exit=0

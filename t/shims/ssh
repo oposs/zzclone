@@ -1,5 +1,12 @@
 #!/bin/sh
-# fake ssh for the regression test: drop the hostname, run the rest
-# locally so it hits the zfs/sudo shims next to this script
-shift
+# fake ssh for the regression test: skip client options (-o takes a value),
+# drop the hostname, and run the remaining command locally so it hits the
+# zfs/sudo shims next to this script
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) shift 2 ;;
+        -*) shift ;;
+        *)  shift; break ;;
+    esac
+done
 exec "$@"

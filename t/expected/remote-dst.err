@@ -5,9 +5,9 @@
 # A resumed run only finishes that stream; run the command once more
 # afterwards to send any snapshots created since (sync incremental).
 # To resume a single dataset by hand, read the token and feed it back:
-#   ssh fake sudo zfs get -H -o value receive_resume_token <dest-dataset>
-#   zfs send -t <token> | mbuffer -m 1G | ssh fake sudo zfs receive -s -u <dest-dataset>
-# To discard a stale token instead: ssh fake sudo zfs receive -A <dest-dataset>
+#   ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs get -H -o value receive_resume_token <dest-dataset>
+#   zfs send -t <token> | mbuffer -m 1G | ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -s -u <dest-dataset>
+# To discard a stale token instead: ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=4 fake sudo zfs receive -A <dest-dataset>
 # tank/data - up to date
 # skipping tank/data/b - no snapshots
 # tank/data/c - no common snapshot, full send

@@ -30,7 +30,11 @@ Options:
                    back to the common snapshot. This discards local changes made
                    to the destination filesystem since its last snapshot as well
                    as any diverging snapshots that are newer on the destination,
-                   so the incremental receive applies cleanly. Implies --sync.
+                   so the incremental receive applies cleanly. The fallback full
+                   send likewise receives with -F, overwriting a destination
+                   that exists but shares no snapshot with the source (e.g. its
+                   base snapshot was rotated away after an interrupted first
+                   run). Implies --sync.
 
   -r, --resume     Make transfers resumable. Every "zfs receive" is emitted with
                    "-s", so if a transfer is interrupted the destination keeps a
@@ -66,6 +70,12 @@ Options:
 
   -v, --verbose    Add "-v" to every "zfs send" so the transfer reports its
                    estimated size and progress on stderr while it runs.
+
+  -W, --watchdog <sec>
+                   Add "-W <sec>" to every mbuffer so a transfer that moves no
+                   data for that long is aborted instead of hanging forever.
+                   Combined with --resume, a wedged transfer then fails fast,
+                   leaves a resume token, and is picked up by the next run.
 
   -h, --help       Show this help message and exit.
 

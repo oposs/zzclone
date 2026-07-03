@@ -23,10 +23,13 @@ The tool outputs shell commands to stdout — it does not execute them directly.
 
 - `-l, --last-only` — Only transfer the last snapshot (no incremental)
 - `-s, --sync` — Check destination snapshots and only output commands for what's missing
-- `-R, --rollback` — Before each incremental send, roll the destination back to the common snapshot (`zfs rollback -r`), discarding local changes and diverging snapshots (implies `--sync`)
+- `-R, --rollback` — Before each incremental send, roll the destination back to the common snapshot (`zfs rollback -r`), discarding local changes and diverging snapshots; the fallback full send receives with `-F`, overwriting a destination that shares no snapshot with the source (implies `--sync`)
 - `-r, --resume` — Make transfers resumable: emit `zfs receive -s`, and on a later run pick up any saved resume token with `zfs send -t`
 - `-c, --chain` — Emit all commands as a single `&&`-joined chain (comments go to stderr), ready to pipe into a shell
 - `-v, --verbose` — Add `-v` to every `zfs send` for size estimate and progress
+- `-W, --watchdog <sec>` — Add `-W <sec>` to every mbuffer: a transfer that moves no data for that long aborts (and leaves a resume token with `--resume`) instead of hanging forever
+
+All emitted `ssh` commands use `BatchMode` and keepalives (`ServerAliveInterval 15`, `ServerAliveCountMax 4`), so a silently dead connection fails within about a minute rather than blocking the pipeline indefinitely.
 - `-S, --sudo` — Prefix every `zfs` invocation with `sudo` (shorthand for `--local-sudo --remote-sudo`)
 - `--local-sudo` — Use `sudo zfs` only on the local side
 - `--remote-sudo` — Use `sudo zfs` only on the remote (SSH) side
