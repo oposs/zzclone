@@ -76,6 +76,39 @@ sub shell_quote {
     return "'$str'";
 }
 
+# Run a command and return its output as a list of chomped lines.
+sub read_lines {
+    my $cmd = shift;
+    open my $fh, '-|', $cmd or die "cannot run $cmd: $!\n";
+    my @lines;
+    while (<$fh>) {
+        chomp;
+        push @lines, $_;
+    }
+    return @lines;
+}
+
+# 'pool/fs@snap' -> 'snap'
+sub snap_name {
+    my $snap = shift;
+    $snap =~ s/.*\@//;
+    return $snap;
+}
+
+# Snapshots of one dataset, oldest first. $quiet suppresses stderr for
+# datasets that may not exist (destination side).
+sub list_snapshots {
+    my ($zfs, $fileset, $quiet) = @_;
+    my $redirect = $quiet ? ' 2>/dev/null' : '';
+    return read_lines("$zfs list -o name -s creation -H -d1 -t snapshot ".shell_quote($fileset).$redirect);
+}
+
+sub get_guid {
+    my ($zfs, $snap) = @_;
+    my ($guid) = read_lines("$zfs get -H -o value guid ".shell_quote($snap));
+    return $guid // '';
+}
+
 sub parse_arg {
     my $arg = shift;
     my @parts = split /:/, $arg, 2;
@@ -194,15 +227,21 @@ my $dest_sudo = ($dest_host ? $remote_sudo : $local_sudo) ? "sudo " : "";
 my $src_zfs = "${src_remote}${src_sudo}zfs";
 my $dest_zfs = "${dest_remote}${dest_sudo}zfs";
 
+# Every transfer is the same pipeline: source-side send, mbuffer to decouple
+# the two ends, destination-side receive (unmounted). Only the send arguments
+# and the destination differ.
+sub transfer_cmd {
+    my ($send_args, $dest) = @_;
+    return "${src_zfs} send${send_v} $send_args | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest);
+}
+
 # In resume mode, fetch every resume token under the destination root in a
 # single recursive call rather than one round-trip per dataset (almost none
 # hold a token). Datasets that do not exist yet simply have no entry.
 my %resume_tokens;
 if ($resume) {
-    open my $tok, '-|', "${dest_zfs} get -rH -t filesystem,volume -o name,value receive_resume_token ".shell_quote($dest_root)." 2>/dev/null";
-    while (<$tok>) {
-        chomp;
-        my ($name, $value) = split /\t/, $_, 2;
+    for my $line (read_lines("${dest_zfs} get -rH -t filesystem,volume -o name,value receive_resume_token ".shell_quote($dest_root)." 2>/dev/null")) {
+        my ($name, $value) = split /\t/, $line, 2;
         $resume_tokens{$name} = $value if defined $value && $value ne '' && $value ne '-';
     }
 }
@@ -222,16 +261,8 @@ if ($resume) {
     emit_comment("# To discard a stale token instead: ${dest_zfs} receive -A <dest-dataset>");
 }
 
-open my $all, '-|', "${src_zfs} list -s name -o name -H -r ".shell_quote($src_root);
-while (<$all>){
-    chomp;
-    my $fileset = $_;
-    open my $one, '-|', "${src_zfs} list -o name -s creation -H -d1 -t snapshot ".shell_quote($fileset);
-    my @src_snaps;
-    while (<$one>){
-        chomp;
-        push @src_snaps, $_;
-    }
+for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote($src_root))) {
+    my @src_snaps = list_snapshots($src_zfs, $fileset);
     if (not @src_snaps){
         emit_comment("# skipping $fileset - no snapshots");
         next;
@@ -250,44 +281,23 @@ while (<$all>){
     # to the newest snapshot follows on the next run, once the token is gone.
     if (my $token = $resume_tokens{$dest_fileset}) {
         emit_comment("# $fileset - resuming interrupted transfer from saved token");
-        emit_cmd("${src_zfs} send${send_v} -t ".shell_quote($token)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_fileset));
+        emit_cmd(transfer_cmd("-t ".shell_quote($token), $dest_fileset));
         next;
     }
 
     if ($sync) {
-        # find destination snapshots
-        my %dest_snaps;
-        open my $dst, '-|', "${dest_zfs} list -o name -s creation -H -d1 -t snapshot ".shell_quote($dest_fileset)." 2>/dev/null";
-        while (<$dst>){
-            chomp;
-            my $snap_name = $_;
-            $snap_name =~ s/.*\@/\@/;
-            $dest_snaps{$snap_name} = 1;
-        }
-
-        # find last common snapshot
-        my $common;
-        for my $snap (reverse @src_snaps) {
-            my $snap_name = $snap;
-            $snap_name =~ s/.*\@/\@/;
-            if ($dest_snaps{$snap_name}) {
-                $common = $snap;
-                last;
-            }
-        }
+        # find last common snapshot: the newest source snapshot whose name
+        # also exists on the destination
+        my %dest_snaps = map { snap_name($_) => 1 } list_snapshots($dest_zfs, $dest_fileset, 'quiet');
+        my ($common) = grep { $dest_snaps{snap_name($_)} } reverse @src_snaps;
 
         if ($common) {
             # verify guid to ensure snapshots are actually related
-            my $common_snap_name = $common;
-            $common_snap_name =~ s/.*\@/\@/;
-            my $src_guid_arg = shell_quote($common);
-            my $src_guid = `${src_zfs} get -H -o value guid $src_guid_arg`;
-            chomp $src_guid;
-            my $dest_guid_arg = shell_quote("$dest_fileset$common_snap_name");
-            my $dest_guid = `${dest_zfs} get -H -o value guid $dest_guid_arg`;
-            chomp $dest_guid;
+            my $common_name = snap_name($common);
+            my $src_guid = get_guid($src_zfs, $common);
+            my $dest_guid = get_guid($dest_zfs, "$dest_fileset\@$common_name");
             if ($src_guid ne $dest_guid) {
-                print STDERR "Error: $fileset$common_snap_name - same name but different guid ($src_guid vs $dest_guid). Datasets are not related.\n";
+                print STDERR "Error: $fileset\@$common_name - same name but different guid ($src_guid vs $dest_guid). Datasets are not related.\n";
                 next;
             }
 
@@ -299,13 +309,11 @@ while (<$all>){
             # roll the destination back to the common snapshot, discarding any
             # diverging snapshots that are newer on the destination
             if ($rollback) {
-                emit_cmd("${dest_zfs} rollback -r ".shell_quote("$dest_fileset$common_snap_name"));
+                emit_cmd("${dest_zfs} rollback -r ".shell_quote("$dest_fileset\@$common_name"));
             }
 
             # incremental send from common to last
-            my $snap_name = $common;
-            $snap_name =~ s/.+\@//;
-            emit_cmd("${src_zfs} send${send_v} -I ".shell_quote($snap_name)." ".shell_quote($last)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_fileset));
+            emit_cmd(transfer_cmd("-I ".shell_quote($common_name)." ".shell_quote($last), $dest_fileset));
             next;
         }
 
@@ -313,17 +321,12 @@ while (<$all>){
         emit_comment("# $fileset - no common snapshot, full send");
     }
 
-    # full send (default behavior or sync fallback)
+    # full send (default behavior or sync fallback), then unless --last-only
+    # an incremental bringing along the rest of the snapshot history
     my $send_snap = $last_only ? $last : $first;
-    my $dest_path = $send_snap;
-    $dest_path =~ s{\Q$src_root\E}{};
-    my $dest_full = "$dest_root$dest_path";
-    emit_cmd("${src_zfs} send${send_v} ".shell_quote($send_snap)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_full));
+    emit_cmd(transfer_cmd(shell_quote($send_snap), "$dest_fileset\@".snap_name($send_snap)));
     if (!$last_only && $first ne $last){
-       my $snap_name = $first;
-       $snap_name =~ s/.+\@//;
-       $dest_full =~ s/\@.+//;
-       emit_cmd("${src_zfs} send${send_v} -I ".shell_quote($snap_name)." ".shell_quote($last)." | mbuffer -m 1G | ${dest_zfs} receive${recv_s} -u ".shell_quote($dest_full));
+        emit_cmd(transfer_cmd("-I ".shell_quote(snap_name($first))." ".shell_quote($last), $dest_fileset));
     }
 }
 
@@ -331,4 +334,3 @@ while (<$all>){
 if ($chain && @commands) {
     print join(" && \\\n", @commands)."\n";
 }
-
