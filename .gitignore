@@ -1,0 +1,24 @@
+# Editor / OS cruft
+*~
+*.swp
+*.swo
+.DS_Store
+*.bak
+
+# Perl build / test artifacts
+/blib/
+/_build/
+/Build
+/Build.bat
+/Makefile
+/Makefile.old
+MYMETA.*
+pm_to_blib
+*.o
+*.bs
+cover_db/
+nytprof.out
+nytprof/
+
+# Local test scratch
+/zzclone-test-*/
