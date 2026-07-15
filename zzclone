@@ -299,6 +299,36 @@ if ($resume) {
     emit_comment("# To discard a stale token instead: ${dest_zfs} receive -A <dest-dataset>");
 }
 
+# Fetch the entire destination inventory -- datasets and their snapshots -- in
+# a single recursive call rather than one round-trip per dataset (each is a
+# separate SSH connection when the destination is remote). Anything but a clean
+# "dataset does not exist" is fatal: a failed probe (host unreachable, sudo
+# refused) must not be mistaken for an absent destination, or the script would
+# emit full sends that are doomed to fail on receive.
+my %dest_dataset;    # dataset name        -> 1
+my %dest_snapshots;  # dataset name        -> { snapshot-name -> 1 }
+{
+    my $probe = "${dest_zfs} list -o name -H -r -t filesystem,volume,snapshot ".shell_quote($dest_root);
+    my $out = `$probe 2>&1`;
+    if ($? != 0) {
+        unless ($out =~ /dataset does not exist/) {
+            print STDERR "Error: cannot inspect destination ".($dest_host ? "$dest_host:" : "")."$dest_root:\n$out";
+            exit 1;
+        }
+        # destination root does not exist yet: plain full sends are emitted below
+    }
+    else {
+        for my $name (split /\n/, $out) {
+            if ($name =~ /\@/) {
+                $dest_snapshots{ (split /\@/, $name, 2)[0] }{ snap_name($name) } = 1;
+            }
+            else {
+                $dest_dataset{$name} = 1;
+            }
+        }
+    }
+}
+
 for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote($src_root))) {
     my @src_snaps = list_snapshots($src_zfs, $fileset);
     if (not @src_snaps){
@@ -326,7 +356,7 @@ for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote
     if ($sync) {
         # find last common snapshot: the newest source snapshot whose name
         # also exists on the destination
-        my %dest_snaps = map { snap_name($_) => 1 } list_snapshots($dest_zfs, $dest_fileset, 'quiet');
+        my %dest_snaps = %{ $dest_snapshots{$dest_fileset} // {} };
         my ($common) = grep { $dest_snaps{snap_name($_)} } reverse @src_snaps;
 
         if ($common) {
@@ -360,7 +390,7 @@ for my $fileset (read_lines("${src_zfs} list -s name -o name -H -r ".shell_quote
         # -F once it carries snapshots, e.g. an orphaned base whose source
         # copy was rotated away). --overwrite clears it first; otherwise warn,
         # since the emitted receive is going to fail.
-        my ($dest_exists) = read_lines("${dest_zfs} list -o name -H ".shell_quote($dest_fileset)." 2>/dev/null");
+        my $dest_exists = $dest_dataset{$dest_fileset};
         if ($dest_exists && $overwrite) {
             emit_comment("# $fileset - no common snapshot, destroying destination, full send");
             emit_cmd("${dest_zfs} destroy -r ".shell_quote($dest_fileset));

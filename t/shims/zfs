@@ -52,7 +52,26 @@ my $cmd = shift @argv;
 
 if ($cmd eq 'list') {
     my $target = $argv[-1];
-    if (grep { $_ eq '-t' } @argv) {
+    # sentinel: a destination that cannot be inspected at all (host
+    # unreachable, sudo refused) -- anything but a clean "does not exist".
+    if ($target =~ /denied/) {
+        print STDERR "cannot open '$target': permission denied\n";
+        exit 1;
+    }
+    # value of -t (may list multiple comma-separated types)
+    my $types = '';
+    for my $i (0 .. $#argv) { $types = $argv[$i + 1] if $argv[$i] eq '-t'; }
+    my $want_ds   = $types =~ /filesystem|volume/;
+    my $want_snap = $types =~ /snapshot/;
+    if ($want_ds) {
+        # recursive inventory: datasets and (with snapshot in -t) their snapshots
+        my @sets = subtree($target) or die "cannot open '$target': dataset does not exist\n";
+        for my $ds (@sets) {
+            print "$ds\n";
+            print "$ds\@$_\n" for $want_snap ? @{$snaps{$ds}} : ();
+        }
+    } elsif ($want_snap) {
+        # snapshots of a single dataset
         exists $snaps{$target} or die "cannot open '$target': dataset does not exist\n";
         print "$target\@$_\n" for @{$snaps{$target}};
     } else {

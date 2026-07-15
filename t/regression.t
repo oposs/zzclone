@@ -40,6 +40,7 @@ my @cases = (
     [ 'watchdog',    qw(-r -W 300 tank/data back/data) ],
     [ 'rollback-F',  qw(-R tank/data back/data) ],
     [ 'overwrite',   qw(-R -F tank/data back/data) ],
+    [ 'unreachable', qw(-s tank/data back/denied) ],
 );
 
 sub slurp {
