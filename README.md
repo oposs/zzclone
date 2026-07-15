@@ -35,6 +35,7 @@ All emitted `ssh` commands use `BatchMode` and keepalives (`ServerAliveInterval 
 - `--local-sudo` — Use `sudo zfs` only on the local side
 - `--remote-sudo` — Use `sudo zfs` only on the remote (SSH) side
 - `-h, --help` — Show help message
+- `-V, --version` — Show the release date of this script
 
 Either source or destination can be remote (via SSH), but not both.
 

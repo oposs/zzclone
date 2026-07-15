@@ -24,6 +24,7 @@ $ENV{PATH} = "$shims:$ENV{PATH}";
 
 my @cases = (
     [ 'help',        '--help' ],
+    [ 'version',     '--version' ],
     [ 'noargs' ],
     [ 'plain',       qw(tank/data back/data) ],
     [ 'lastonly',    qw(-l tank/data back/data) ],
@@ -69,6 +70,9 @@ sub run_case {
         err => slurp("$tmpdir/err"),
     );
     s/\Q$script\E/ZZCLONE/g for values %stream;
+    # The version date is bumped on every commit; normalize it so the
+    # --version fixture does not need regenerating each time.
+    s/^(ZZCLONE) \d{4}-\d\d-\d\d$/$1 VERSION/m for values %stream;
     return %stream;
 }
 

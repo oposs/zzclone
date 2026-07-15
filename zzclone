@@ -3,6 +3,9 @@ use strict;
 use warnings;
 use Getopt::Long qw(:config no_ignore_case bundling);
 
+# Release date of this script, bumped on each commit.
+our $VERSION = '2026-07-15';
+
 my $last_only = 0;
 my $sync = 0;
 my $rollback = 0;
@@ -15,6 +18,7 @@ my $verbose = 0;
 my $watchdog = 0;
 my $overwrite = 0;
 my $help = 0;
+my $version = 0;
 
 GetOptions(
     'l|last-only'  => \$last_only,
@@ -29,7 +33,13 @@ GetOptions(
     'W|watchdog=i' => \$watchdog,
     'F|overwrite'  => \$overwrite,
     'h|help'       => \$help,
+    'V|version'    => \$version,
 ) or exit 1;
+
+if ($version) {
+    print "$0 $VERSION\n";
+    exit 0;
+}
 
 # "-v" passed through to every "zfs send" so the transfer reports progress.
 my $send_v = $verbose ? ' -v' : '';
@@ -225,6 +235,8 @@ Options:
                    warning and a full send that will fail. Implies --sync.
 
   -h, --help       Show this help message and exit.
+
+  -V, --version    Show the release date of this script and exit.
 
 Examples:
   # Show what a first-time clone of a tree would run

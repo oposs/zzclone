@@ -88,6 +88,8 @@ Options:
 
   -h, --help       Show this help message and exit.
 
+  -V, --version    Show the release date of this script and exit.
+
 Examples:
   # Show what a first-time clone of a tree would run
   ZZCLONE tank/data backup/data
